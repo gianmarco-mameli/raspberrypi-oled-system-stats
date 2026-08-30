@@ -22,16 +22,19 @@ I2C_PORT = 1
 I2C_ADDRESS = 0x3C
 DISPLAY_WIDTH = 128
 DISPLAY_HEIGHT = 32
+# only 0 or 180 degrees are supported
+DISPLAY_ROTATE_DEGREES = 180
 
 # --- Timing configuration ---
 STATS_UPDATE_SECONDS = 2
 ORBIT_SHIFT_SECONDS = 60
 
-# --- Burn-in prevention: small (x, y) offsets cycled through over time ---
+# --- Burn-in prevention: small (x, y) offsets cycled through over time.
+# Actual drawn positions are always clamped to the display bounds, so these
+# can be any values without risk of drawing off-screen. ---
 ORBIT_OFFSETS = [
-    (0, 0), (1, 0), (2, 0), (2, 1), (2, 2),
-    (1, 2), (0, 2), (-1, 2), (-2, 2), (-2, 1),
-    (-2, 0), (-2, -1), (-2, -2), (-1, -2), (0, -1),
+    (0, 0), (2, 0), (4, 1), (4, 2), (2, 3),
+    (0, 4), (-2, 3), (-4, 2), (-4, 1), (-2, 0),
 ]
 
 TEMP_PATH = "/sys/class/thermal/thermal_zone0/temp"
@@ -78,17 +81,26 @@ def draw_stats(draw, font, offset, stats):
     line2 = f"MEM:{mem_used}/{mem_total}MB"
     line3 = f"DSK:{disk_used:.1f}/{disk_total:.1f}GB"
 
-    draw.text((x, y), line1, font=font, fill="white")
-    draw.text((x, y + 10), line2, font=font, fill="white")
-    draw.text((x, y + 20), line3, font=font, fill="white")
+    # clamp each line's position to the display bounds so the orbit shift
+    # can never draw text outside the visible area
+    for text, base_y in ((line1, 0), (line2, 10), (line3, 20)):
+        left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+        width, height = right - left, bottom - top
+        pos_x = min(max(x, 0), max(DISPLAY_WIDTH - width, 0))
+        pos_y = min(max(base_y + y, 0), max(DISPLAY_HEIGHT - height, 0))
+        draw.text((pos_x, pos_y), text, font=font, fill="white")
 
 
 def main():
     signal.signal(signal.SIGTERM, handle_stop_signal)
     signal.signal(signal.SIGINT, handle_stop_signal)
 
+    if DISPLAY_ROTATE_DEGREES not in (0, 180):
+        sys.exit("DISPLAY_ROTATE_DEGREES must be 0 or 180")
+    rotate = 2 if DISPLAY_ROTATE_DEGREES == 180 else 0
+
     serial = i2c(port=I2C_PORT, address=I2C_ADDRESS)
-    device = ssd1306(serial, width=DISPLAY_WIDTH, height=DISPLAY_HEIGHT)
+    device = ssd1306(serial, width=DISPLAY_WIDTH, height=DISPLAY_HEIGHT, rotate=rotate)
     font = ImageFont.load_default()
 
     # prime cpu_percent so the first reading is meaningful
